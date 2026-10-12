@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Oct 12 14:54:38 2026
+
+@author: susannakeith
+"""
+# ============================================================
+# 1. IMPORTS
+# ============================================================
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+# ============================================================
+# 2. INPUT PARAMETERS
+# ============================================================
+
+# Building cost
+Cost = 655840
+
+# Two possible Vs30 values (m/s)
+Vs30 = [100, 500]
+
+# Insurance loading factor
+LF = 0.4
+
+# ============================================================
+# 3. NECESSARY FUNCTIONS
+# ============================================================
+
+def alpha(r, n):
+    """Calculate the annuity factor for interest rate r and term n."""
+    return r * n / (1 - (1 + r)**(-n))
+
+
+def EFL(Vs30):
+    """
+    Calculate expected future loss as a fraction of building cost.
+
+    Parameters
+    ----------
+    Vs30 : float
+        Average shear-wave velocity in the upper 30 m (m/s).
+    """
+    return (
+        -3676.895
+        + (119191.8 - (-3676.895))
+        / (1 + (Vs30 / 58.65813)**0.6329536)
+    ) / Cost
+
+
+def premium(loss, LF):
+    """Calculate the insurance premium from expected loss and loading factor."""
+    return loss / (1 - LF)
+
+
+# ============================================================
+# 4. EXPECTED LOSSES AND INSURANCE PREMIUMS
+# ============================================================
+
+# Expected future losses as percentages of building cost
+EFL_V1 = 100 * EFL(Vs30[0])
+EFL_V2 = 100 * EFL(Vs30[1])
+
+# Insurance premiums as percentages of building cost
+prem_V1 = premium(EFL_V1, LF)
+prem_V2 = premium(EFL_V2, LF)
+
+
+# ============================================================
+# 5. CLIENT OUTCOME FUNCTIONS
+# ============================================================
+
+# Outcomes associated with the different combinations of
+# decisions and true site conditions
+o11 = -prem_V1
+o12 = -prem_V1
+o22 = -prem_V2
+
+
+def pov(x):
+    """Expected client outcome when the true Vs30 is known."""
+    return o11 * x + o22 * (1 - x)
+
+
+def pv_1(x):
+    """Expected client outcome for decision d1."""
+    return o11 * x + o12 * (1 - x)
+
+
+def pv_2(x, a):
+    """Expected client outcome for decision d2."""
+    o21 = -prem_V2 + a * (EFL_V2 - EFL_V1)
+    return o21 * x + o22 * (1 - x)
+
+
+def exp_outcome1(x):
+    """Expected client outcome for decision d1."""
+    return o11 * x + o12 * (1 - x)
+
+
+def exp_outcome2(x, a):
+    """Expected client outcome for decision d2."""
+    o21 = -prem_V2 + a * (EFL_V2 - EFL_V1)
+    return o21 * x + o22 * (1 - x)
+
+
+def no_ins(x, a):
+    """Expected client outcome when insurance is not purchased."""
+    return a * (-EFL_V1 * x - EFL_V2 * (1 - x))
+
+
+# ============================================================
+# 6. INSURER PROFIT FUNCTIONS
+# ============================================================
+
+# Expected insurer profit for each combination of decision
+# and true site condition
+profit_V1 = prem_V1 - EFL_V1
+profit_V2 = prem_V2 - EFL_V2
+
+profit_o11 = profit_V1
+profit_o12 = prem_V1 - EFL_V2
+profit_o21 = profit_V2
+profit_o22 = profit_V2
+
+
+# ============================================================
+# 7. VALUE OF INFORMATION ANALYSIS AND PLOTTING
+# ============================================================
+
+def plot_voi(a):
+    """
+    Calculate and plot client and insurer outcomes and VoI.
+
+    Parameters
+    ----------
+    a : float
+        Parameter controlling the outcome associated with decision d2.
+    """
+
+    # --------------------------------------------------------
+    # 7.1 Evaluate outcomes over the range of prior probabilities
+    # --------------------------------------------------------
+
+    p = np.linspace(0, 1, 101)
+
+    # Client VoI: difference between the informed outcome and
+    # the best expected outcome when Vs30 is uncertain
+    VoI = np.array([
+        pov(pp) - max(pv_1(pp), pv_2(pp, a))
+        for pp in p
+    ])
+
+    # Initialise arrays for insurer profit and VoI
+    profit = []
+    test = []
+    voi_ins = []
+
+    # --------------------------------------------------------
+    # 7.2 Calculate insurer profit and VoI
+    # --------------------------------------------------------
+
+    for pp in p:
+
+        # Select the decision that gives the client the better outcome
+        if exp_outcome2(pp, a) > exp_outcome1(pp):
+            exp_p = profit_o21 * pp + profit_o22 * (1 - pp)
+        else:
+            exp_p = profit_o11 * pp + profit_o12 * (1 - pp)
+
+        # Expected insurer profit under the comparison scenario
+        test_p = profit_o11 * pp + profit_o22 * (1 - pp)
+
+        # Store the results
+        profit.append(exp_p)
+        test.append(test_p)
+
+        # Insurer VoI: difference between the comparison profit
+        # and the profit under the selected client decision
+        voi_ins.append(test_p - exp_p)
+
+    profit = np.array(profit)
+    test = np.array(test)
+    voi_ins = np.array(voi_ins)
+
+    # Probability at which the client's VoI is maximised
+    p_max = p[np.argmax(VoI)]
+
+    # --------------------------------------------------------
+    # 7.3 Create the four-panel figure
+    # --------------------------------------------------------
+
+    fig, ax = plt.subplots(2, 2, figsize=(10, 10))
+
+    # --------------------------------------------------------
+    # Panel 1: Expected client outcomes
+    # --------------------------------------------------------
+
+    ax[0, 0].plot(p, no_ins(p, a), label=r'$d_0$')
+    ax[0, 0].plot(p, pv_1(p), label=r'$d_1$')
+    ax[0, 0].plot(p, pv_2(p, a), label=r'$d_2$')
+    ax[0, 0].plot(p, pov(p), label='True')
+
+    ax[0, 0].set_xlabel('Prior probability of V1')
+    ax[0, 0].set_ylabel('Expected client outcome (% of building cost)')
+    ax[0, 0].set_title('Expected outcomes for the client')
+    ax[0, 0].legend()
+
+    # --------------------------------------------------------
+    # Panel 2: Client VoI
+    # Line style indicates the sign of the insurer's VoI
+    # --------------------------------------------------------
+
+    for i in range(len(p) - 1):
+
+        if voi_ins[i] >= 0 and voi_ins[i + 1] >= 0:
+            ax[0, 1].plot(
+                p[i:i + 2], VoI[i:i + 2],
+                color='tab:blue', linestyle='solid',
+                label='Positive' if i == 0 else ""
+            )
+
+        else:
+            ax[0, 1].plot(
+                p[i:i + 2], VoI[i:i + 2],
+                color='black', linestyle='dashed',
+                label='Negative' if i == 0 else ""
+            )
+
+    ax[0, 1].axvline(
+        x=p_max, color='lightgrey',
+        label='Maximum client VoI'
+    )
+
+    ax[0, 1].set_title('VoI for the client')
+    ax[0, 1].set_xlabel('Prior probability of V1')
+    ax[0, 1].set_ylabel('Client VoI (% of building cost)')
+    ax[0, 1].legend(title="Insurer's VoI")
+
+    # --------------------------------------------------------
+    # Panel 3: Expected insurer profit
+    # --------------------------------------------------------
+
+    ax[1, 0].plot(p, profit, label='Optimal client choice')
+    ax[1, 0].plot(p, test, label='Data collection performed')
+
+    ax[1, 0].set_title('Expected profit for the insurer')
+    ax[1, 0].set_xlabel('Prior probability of V1')
+    ax[1, 0].set_ylabel('Expected profit (% of building cost)')
+    ax[1, 0].legend()
+
+    # --------------------------------------------------------
+    # Panel 4: Insurer VoI
+    # --------------------------------------------------------
+
+    ax[1, 1].plot(p, voi_ins, label='VoI - Insurer')
+    ax[1, 1].axhline(y=0, color='lightgrey')
+
+    ax[1, 1].set_title('VoI for the insurer')
+    ax[1, 1].set_xlabel('Prior probability of V1')
+    ax[1, 1].set_ylabel('Insurer VoI (% of building cost)')
+    ax[1, 1].legend()
+
+    # --------------------------------------------------------
+    # 7.4 Final formatting
+    # --------------------------------------------------------
+
+    plt.tight_layout(pad=2)
+    plt.show()
